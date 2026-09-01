@@ -1,0 +1,19 @@
+name: fuelrush_workspace
+publish_to: none
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+workspace:
+  - apps/mobile
+  - packages/shared
+  - packages/ui_flutter
+
+dev_dependencies:
+  melos: ^8.6.0
+  fl_chart: ^0.70.2
+  google_maps_flutter: ^2.17.0
+  geolocator: ^13.0.2
+
+  # Real-time
+  socket_io_client: ^3.1.4
