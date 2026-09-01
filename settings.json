@@ -1,0 +1,18 @@
+{
+  "dart.lineLength": 100,
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "dart.analysisExcludedFolders": [
+    "**/.dart_tool",
+    "**/build",
+    "**/.idea"
+  ],
+  // Enforce strict typing
+  "dart.enableSdkFormatter": true,
+  "[dart]": {
+    "editor.defaultFormatter": "Dart-Code.dart-code"
+  }
+}
