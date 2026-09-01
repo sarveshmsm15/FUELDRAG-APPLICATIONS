@@ -1,19 +1,56 @@
-name: fuelrush_workspace
+name: fuelrush_mobile
+description: FUELRUSH — On-demand fuel delivery mobile application.
+version: 1.0.0+100
 publish_to: none
+resolution: workspace
 
 environment:
   sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.47.0"
 
-workspace:
-  - apps/mobile
-  - packages/shared
-  - packages/ui_flutter
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.4.2
+ 
+
+  # Navigation
+  go_router: ^17.2.3
+
+  # HTTP
+  dio: ^5.9.2
+
+  # Local Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_secure_storage: ^11.0.0
+
+  # Crypto
+  crypto: ^3.0.7
+
+  # Utilities
+  logger: ^2.7.0
+  device_info_plus: ^13.1.0
+  package_info_plus: ^10.1.0
+  connectivity_plus: ^7.3.1
+  equatable: ^2.0.7
+
+  # UI
+  flutter_animate: ^4.5.2
+
+  # Monorepo
+  fuelrush_shared:
+    path: ../../packages/shared
+  fuelrush_ui:
+    path: ../../packages/ui_flutter
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+  flutter_local_notifications: ^22.3.0
 
 dev_dependencies:
-  melos: ^8.6.0
-  fl_chart: ^0.70.2
-  google_maps_flutter: ^2.17.0
-  geolocator: ^13.0.2
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
 
-  # Real-time
-  socket_io_client: ^3.1.4
+flutter:
+  uses-material-design: true
