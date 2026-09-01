@@ -1,0 +1,15 @@
+#!/bin/sh
+# This is a generated file; do not edit or check into version control.
+export "FLUTTER_ROOT=/opt/homebrew/share/flutter"
+export "FLUTTER_APPLICATION_PATH=/Users/Sarvesh/Desktop/fuelrush/apps/mobile"
+export "FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH=/Users/Sarvesh/Desktop/fuelrush/apps/mobile/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework"
+export "COCOAPODS_PARALLEL_CODE_SIGN=true"
+export "FLUTTER_TARGET=/Users/Sarvesh/Desktop/fuelrush/apps/mobile/lib/main.dart"
+export "FLUTTER_BUILD_DIR=build"
+export "FLUTTER_BUILD_NAME=1.0.0"
+export "FLUTTER_BUILD_NUMBER=100"
+export "DART_DEFINES=QVBJX0JBU0VfVVJMPWh0dHA6Ly8xNzIuMjAuNTYuMzY6MzAwMC9hcGk=,QVBJX1ZFUlNJT049djE=,QVBQX05BTUU9RlVFTFJVU0g=,RU5WSVJPTk1FTlQ9ZGV2ZWxvcG1lbnQ=,RkxVVFRFUl9CVUlMRF9OQU1FPTEuMC4w,RkxVVFRFUl9CVUlMRF9OVU1CRVI9MTAw,RkxVVFRFUl9WRVJTSU9OPTMuNDcuMg==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049ZDNiMTRjODc2OQ==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YTgwNGIyNjE2NA==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMy4y"
+export "DART_OBFUSCATION=false"
+export "TRACK_WIDGET_CREATION=true"
+export "TREE_SHAKE_ICONS=false"
+export "PACKAGE_CONFIG=/Users/Sarvesh/Desktop/fuelrush/.dart_tool/package_config.json"
