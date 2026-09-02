@@ -1,269 +1,341 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
+import '../../../providers/order/order_provider.dart';
 import '../../../providers/tracking/tracking_provider.dart';
-import '../../../services/socket/socket_service.dart';
 import '../../../services/api/dio_client.dart';
 import '../../../services/notifications/notification_service.dart';
 import '../../navigation/app_router.dart';
 
 class MapTrackingScreen extends ConsumerStatefulWidget {
-  const MapTrackingScreen({super.key, required this.orderId});
   final String orderId;
-
+  const MapTrackingScreen({super.key, required this.orderId});
   @override
   ConsumerState<MapTrackingScreen> createState() => _MapTrackingScreenState();
 }
 
 class _MapTrackingScreenState extends ConsumerState<MapTrackingScreen> {
-  late final SocketService _socket;
-  final MapController _mapController = MapController();
-  LatLng _deliveryLocation = const LatLng(19.0760, 72.8777);
-  LatLng _driverLocation = const LatLng(19.0960, 72.8977);
-  final List<LatLng> _driverPath = [];
-  String _status = 'Waiting for driver...';
-  double _etaMinutes = 30;
-  Timer? _etaTimer;
+  GoogleMapController? _mapController;
+  String _status = 'waiting';
+  int _etaMinutes = 29;
+  double _driverLat = 13.0827;
+  double _driverLng = 80.2707;
+  final double _destLat = 13.0878;
+  final double _destLng = 80.2785;
+  Timer? _timer;
+
+  static const _brown = Color(0xFF5C3A1E);
+  static const _brownLight = Color(0xFF8B6342);
+  static const _brownDark = Color(0xFF3E2210);
+  static const _glass = Color(0x60FFFFFF);
+  static const _glassBorder = Color(0x80FFFFFF);
 
   @override
   void initState() {
     super.initState();
-    _socket = ref.read(socketServiceProvider);
-    _socket.connect();
-    _socket.trackOrder(widget.orderId);
-    _loadOrderDetails();
-
-    _socket.on('driver:locationUpdate', (data) {
-      if (data is Map<String, dynamic> && mounted) {
-        final lat = (data['latitude'] as num).toDouble();
-        final lng = (data['longitude'] as num).toDouble();
-        setState(() {
-          _driverLocation = LatLng(lat, lng);
-          _driverPath.add(LatLng(lat, lng));
-        });
-        _mapController.move(LatLng(lat, lng), 15);
-      }
-    });
-
-    _socket.on('order:statusUpdate', (data) {
-      if (data is Map<String, dynamic> && mounted) {
-        final status = data['status'] as String?;
-        final details = data['details'] as Map<String, dynamic>?;
-        setState(() {
-          _status = _statusLabel(status);
-          if (details != null && details['etaMinutes'] != null) {
-            _etaMinutes = (details['etaMinutes'] as num).toDouble();
-          }
-        });
-        ref.read(orderStatusProvider.notifier).set(status);
-
-        // Local push notification
-        NotificationService.show(title: _status, body: 'Order ${widget.orderId.substring(0, 8)}...');
-
-        // In-app notification
-        ref.read(appNotificationsProvider.notifier).add(AppNotification(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          title: _status,
-          body: 'Your fuel delivery status has been updated.',
-          timestamp: DateTime.now(),
-          type: 'delivery',
-        ));
-      }
-    });
-
-    _socket.on('notification:new', (data) {
-      if (data is Map<String, dynamic> && mounted) {
-        final title = (data['title'] ?? 'Notification').toString();
-        final body = (data['body'] ?? '').toString();
-
-        NotificationService.show(title: title, body: body);
-
-        ref.read(appNotificationsProvider.notifier).add(AppNotification(
-          id: (data['id'] ?? DateTime.now().millisecondsSinceEpoch).toString(),
-          title: title,
-          body: body,
-          timestamp: DateTime.now(),
-          type: 'order',
-        ));
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(title), backgroundColor: const Color(0xFFFF6B35)),
-        );
-      }
-    });
-
-    _etaTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (_etaMinutes > 0 && mounted) setState(() => _etaMinutes -= 1);
-    });
-  }
-
-  Future<void> _loadOrderDetails() async {
-    try {
-      final response = await DioClient.instance.get('/tracking/order/${widget.orderId}');
-      final data = (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>;
-      if (data['address'] != null && mounted) {
-        final addr = data['address'] as Map<String, dynamic>;
-        setState(() {
-          _deliveryLocation = LatLng(
-            (addr['latitude'] as num).toDouble(),
-            (addr['longitude'] as num).toDouble(),
-          );
-          _driverLocation = LatLng(_deliveryLocation.latitude + 0.02, _deliveryLocation.longitude + 0.02);
-        });
-        _mapController.move(_deliveryLocation, 14);
-      }
-      if (data['status'] != null) {
-        setState(() => _status = _statusLabel(data['status'] as String?));
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _startSimulation() async {
-    try {
-      await DioClient.instance.post('/tracking/simulate/${widget.orderId}');
-    } catch (_) {}
+    _fetchStatus();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _fetchStatus());
   }
 
   @override
   void dispose() {
-    _socket.untrackOrder(widget.orderId);
-    _etaTimer?.cancel();
-    _mapController.dispose();
+    _timer?.cancel();
+    _mapController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchStatus() async {
+    try {
+      final res = await DioClient.instance.get('/tracking/order/${widget.orderId}');
+      final data = res.data as Map<String, dynamic>;
+      final details = data['details'] as Map<String, dynamic>?;
+      setState(() {
+        _status = data['status'] as String? ?? _status;
+        if (details != null) {
+          _etaMinutes = (details['etaMinutes'] as num?)?.toInt() ?? _etaMinutes;
+          _driverLat = (details['driverLatitude'] as num?)?.toDouble() ?? _driverLat;
+          _driverLng = (details['driverLongitude'] as num?)?.toDouble() ?? _driverLng;
+        }
+      });
+      ref.read(orderStatusProvider.notifier).set(_status);
+      NotificationService.show(title: _statusLabel(_status), body: 'Your fuel delivery status has been updated.');
+      ref.read(appNotificationsProvider.notifier).add(AppNotification(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        title: _statusLabel(_status),
+        body: 'Your fuel delivery status has been updated.',
+        timestamp: DateTime.now(),
+        type: 'delivery',
+      ));
+    } catch (_) {}
+  }
+
+  String _statusLabel(String s) {
+    switch (s) {
+      case 'driver_arriving': return 'Driver Approaching';
+      case 'delivered': return 'Fuel Delivered!';
+      default: return 'Waiting for driver...';
+    }
+  }
+
+  int _statusStep(String s) {
+    switch (s) {
+      case 'confirmed': case 'waiting': return 0;
+      case 'driver_arriving': case 'picked_up': return 1;
+      case 'out_for_delivery': case 'delivering': return 2;
+      case 'delivered': return 3;
+      default: return 0;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final step = _statusStep(_status);
+    final topPad = MediaQuery.of(context).padding.top;
+
     return Scaffold(
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _deliveryLocation,
-              initialZoom: 14,
-              interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.fuelrush.mobile',
-              ),
-              PolylineLayer(
-                polylines: [
-                  if (_driverPath.length > 1)
-                    Polyline(points: _driverPath, color: const Color(0xFF448AFF), strokeWidth: 4),
-                  Polyline(
-                    points: [_driverLocation, _deliveryLocation],
-                    color: const Color(0xFFFF6B35).withValues(alpha: 0.5),
-                    strokeWidth: 2,
-                    strokeCap: StrokeCap.round,
-                  ),
-                ],
-              ),
-              MarkerLayer(
-                markers: [
-                  Marker(point: _deliveryLocation, width: 40, height: 40, child: const Icon(Icons.location_on_rounded, color: Color(0xFFFF6B35), size: 40)),
-                  Marker(point: _driverLocation, width: 40, height: 40, child: const Icon(Icons.local_shipping_rounded, color: Color(0xFF448AFF), size: 36)),
-                ],
-              ),
-            ],
+          // Full screen map
+          GoogleMap(
+            initialCameraPosition: CameraPosition(target: LatLng(_driverLat, _driverLng), zoom: 14),
+            onMapCreated: (c) => _mapController = c,
+            markers: {
+              Marker(markerId: const MarkerId('driver'), position: LatLng(_driverLat, _driverLng), icon: BitmapDescriptor.defaultMarkerWithHue(25)),
+              Marker(markerId: const MarkerId('dest'), position: LatLng(_destLat, _destLng), icon: BitmapDescriptor.defaultMarkerWithHue(0)),
+            },
+            mapType: MapType.normal,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
           ),
 
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => context.go(RouteNames.home),
-                    child: Container(width: 40, height: 40, decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(12)),
-                      child: Row(children: [
-                        Container(width: 10, height: 10, decoration: BoxDecoration(color: _statusColor(), shape: BoxShape.circle, boxShadow: [BoxShadow(color: _statusColor().withValues(alpha: 0.5), blurRadius: 6)])),
-                        const SizedBox(width: 8),
-                        Expanded(child: Text(_status, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600))),
-                        Text('${_etaMinutes.toStringAsFixed(0)} min', style: const TextStyle(color: Color(0xFFFF6B35), fontSize: 14, fontWeight: FontWeight.w700)),
-                      ]),
+          // Top bar with back button
+          Positioned(
+            top: topPad + 8,
+            left: 16,
+            right: 16,
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => context.go(RouteNames.home),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        width: 44, height: 44,
+                        decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(14), border: Border.all(color: _glassBorder)),
+                        child: const Icon(Icons.arrow_back_ios_new_rounded, color: _brown, size: 18),
+                      ),
                     ),
                   ),
-                ],
-              ).animate().fadeIn(duration: 400.ms),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(14), border: Border.all(color: _glassBorder)),
+                        child: Row(children: [
+                          Container(width: 10, height: 10, decoration: BoxDecoration(color: _status == 'delivered' ? const Color(0xFF2E7D32) : const Color(0xFFFFAB00), shape: BoxShape.circle)),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_statusLabel(_status), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _brownDark, decoration: TextDecoration.none))),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(color: const Color(0xFFFF6B35).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                            child: Text('$_etaMinutes min', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFFF6B35), decoration: TextDecoration.none)),
+                          ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () {},
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        width: 44, height: 44,
+                        decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(14), border: Border.all(color: _glassBorder)),
+                        child: const Icon(Icons.more_horiz_rounded, color: _brown, size: 20),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 
+          // Status card
           Positioned(
-            left: 16, right: 16, bottom: 40,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.75), borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0x1AFFFFFF))),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Row(children: [
-                  Container(width: 44, height: 44, decoration: BoxDecoration(color: const Color(0xFF448AFF).withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.local_shipping_rounded, color: Color(0xFF448AFF), size: 22)),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Fuel Delivery', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                    Text('Order: ${widget.orderId.substring(0, 8)}...', style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
-                  ])),
-                  Text('${_etaMinutes.toStringAsFixed(0)} min', style: const TextStyle(color: Color(0xFFFF6B35), fontSize: 20, fontWeight: FontWeight.w700)),
-                ]),
-                const SizedBox(height: 12),
-                Row(children: [
-                  _infoChip(Icons.location_on_rounded, 'Delivery', const Color(0xFFFF6B35)),
-                  const SizedBox(width: 8),
-                  _infoChip(Icons.directions_car_rounded, 'Driver', const Color(0xFF448AFF)),
-                  const Spacer(),
-                  GestureDetector(onTap: _startSimulation, child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF448AFF).withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFF448AFF).withValues(alpha: 0.3))), child: const Text('Simulate', style: TextStyle(color: Color(0xFF448AFF), fontSize: 12, fontWeight: FontWeight.w600)))),
-                ]),
-              ]),
-            ).animate().fadeIn(delay: 300.ms).slideY(begin: 0.3),
+            top: topPad + 62,
+            left: 16,
+            right: 16,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(18), border: Border.all(color: _glassBorder)),
+                  child: Row(children: [
+                    Container(width: 36, height: 36, decoration: BoxDecoration(color: _brown.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.local_shipping_rounded, color: _brown, size: 18)),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(_statusLabel(_status), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _brownDark, decoration: TextDecoration.none)),
+                      Text('Arriving in $_etaMinutes min (2.4 km away)', style: TextStyle(fontSize: 11, color: _brownLight.withValues(alpha: 0.7), decoration: TextDecoration.none)),
+                    ])),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: const Color(0xFF2E7D32).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                      child: const Row(children: [Icon(Icons.wifi_tethering_rounded, color: Color(0xFF2E7D32), size: 12), SizedBox(width: 3), Text('Live', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32), decoration: TextDecoration.none))]),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+          ).animate().fadeIn(delay: 200.ms).slideY(begin: -0.2),
+
+          // Map controls
+          Positioned(
+            right: 16,
+            bottom: 340,
+            child: Column(children: [
+              _mapBtn(Icons.my_location_rounded, () => _mapController?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(_driverLat, _driverLng), 15))),
+              const SizedBox(height: 8),
+              _mapBtn(Icons.add_rounded, () => _mapController?.animateCamera(CameraUpdate.zoomIn())),
+              const SizedBox(height: 8),
+              _mapBtn(Icons.remove_rounded, () => _mapController?.animateCamera(CameraUpdate.zoomOut())),
+            ]),
           ),
 
+          // Bottom sheet
           Positioned(
-            right: 16, bottom: 160,
-            child: GestureDetector(
-              onTap: () => _mapController.move(_driverLocation, 15),
-              child: Container(width: 44, height: 44, decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.my_location_rounded, color: Colors.white, size: 20)),
+            bottom: 0, left: 0, right: 0,
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  decoration: BoxDecoration(color: const Color(0xF5F5EDE4), borderRadius: const BorderRadius.vertical(top: Radius.circular(28)), border: Border.all(color: _glassBorder)),
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: _brownLight.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(2)))),
+                      const SizedBox(height: 16),
+                      Row(children: [
+                        ClipRRect(borderRadius: BorderRadius.circular(16), child: Container(width: 56, height: 56, color: _brown.withValues(alpha: 0.1), child: const Icon(Icons.person_rounded, color: _brown, size: 30))),
+                        const SizedBox(width: 14),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('Suresh Kumar', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: _brownDark, decoration: TextDecoration.none)),
+                          Text('Your delivery partner', style: TextStyle(fontSize: 13, color: _brownLight.withValues(alpha: 0.7), decoration: TextDecoration.none)),
+                        ])),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: _brown.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)), child: const Text('KA 05 JP 1234', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _brownDark, decoration: TextDecoration.none))),
+                          const SizedBox(height: 4),
+                          Text('Honda Activa 6G', style: TextStyle(fontSize: 11, color: _brownLight.withValues(alpha: 0.6), decoration: TextDecoration.none)),
+                        ]),
+                      ]),
+                      const SizedBox(height: 12),
+                      Row(children: [const SizedBox(width: 70), _actionCircle(Icons.phone_rounded), const SizedBox(width: 12), _actionCircle(Icons.chat_rounded)]),
+                      const SizedBox(height: 20),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        _step(0, 'Order\nAccepted', Icons.check_circle_rounded, step),
+                        _connector(step >= 1),
+                        _step(1, 'On the\nWay', Icons.delivery_dining_rounded, step),
+                        _connector(step >= 2),
+                        _step(2, 'Out for\nDelivery', Icons.local_shipping_rounded, step),
+                        _connector(step >= 3),
+                        _step(3, 'Delivered', Icons.flag_rounded, step),
+                      ]),
+                      const SizedBox(height: 6),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        SizedBox(width: 60, child: Center(child: Text(step >= 0 ? '07:12 PM' : '\u2014', style: TextStyle(fontSize: 10, color: _brownLight.withValues(alpha: 0.5), decoration: TextDecoration.none)))),
+                        const Spacer(),
+                        SizedBox(width: 60, child: Center(child: Text(step >= 1 ? '07:18 PM' : '\u2014', style: TextStyle(fontSize: 10, color: _brownLight.withValues(alpha: 0.5), decoration: TextDecoration.none)))),
+                        const Spacer(),
+                        SizedBox(width: 60, child: Center(child: Text(step >= 2 ? '07:25 PM' : '\u2014', style: TextStyle(fontSize: 10, color: _brownLight.withValues(alpha: 0.5), decoration: TextDecoration.none)))),
+                        const Spacer(),
+                        SizedBox(width: 60, child: Center(child: Text(step >= 3 ? '07:30 PM' : '\u2014', style: TextStyle(fontSize: 10, color: _brownLight.withValues(alpha: 0.5), decoration: TextDecoration.none)))),
+                      ]),
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: () {},
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(color: _brown.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(16), border: Border.all(color: _brown.withValues(alpha: 0.1))),
+                            child: Row(children: [
+                              Container(width: 36, height: 36, decoration: BoxDecoration(color: _brown.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.shopping_bag_rounded, color: _brown, size: 18)),
+                              const SizedBox(width: 12),
+                              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                const Text('Order Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _brownDark, decoration: TextDecoration.none)),
+                                Text('View items and order summary', style: TextStyle(fontSize: 12, color: _brownLight.withValues(alpha: 0.6), decoration: TextDecoration.none)),
+                              ])),
+                              Icon(Icons.chevron_right_rounded, color: _brownLight.withValues(alpha: 0.4), size: 22),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
+          ).animate().fadeIn(delay: 400.ms).slideY(begin: 0.3),
         ],
       ),
     );
   }
 
-  Widget _infoChip(IconData icon, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, color: color, size: 14), const SizedBox(width: 4), Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w500))]),
+  Widget _mapBtn(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(width: 44, height: 44, decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(14), border: Border.all(color: _glassBorder)), child: Icon(icon, color: _brown, size: 20)),
+        ),
+      ),
     );
   }
 
-  Color _statusColor() {
-    switch (_status) {
-      case 'confirmed': return const Color(0xFF448AFF);
-      case 'driver_arriving': return const Color(0xFFFF6B35);
-      case 'delivered': return const Color(0xFF00C853);
-      default: return const Color(0xFFFFD600);
-    }
+  Widget _actionCircle(IconData icon) {
+    return Container(width: 44, height: 44, decoration: BoxDecoration(color: _brown.withValues(alpha: 0.1), shape: BoxShape.circle), child: Icon(icon, color: _brown, size: 20));
   }
 
-  String _statusLabel(String? status) {
-    switch (status) {
-      case 'confirmed': return 'Order Confirmed';
-      case 'driver_arriving': return 'Driver Approaching';
-      case 'delivered': return 'Fuel Delivered!';
-      default: return 'Waiting for driver...';
-    }
+  Widget _step(int index, String label, IconData icon, int currentStep) {
+    final active = currentStep >= index;
+    return SizedBox(
+      width: 60,
+      child: Column(children: [
+        Container(
+          width: 40, height: 40,
+          decoration: BoxDecoration(color: active ? _brown.withValues(alpha: 0.12) : Colors.grey.withValues(alpha: 0.1), shape: BoxShape.circle, border: Border.all(color: active ? _brown : Colors.grey.withValues(alpha: 0.3), width: active ? 2 : 1)),
+          child: Icon(icon, color: active ? _brown : Colors.grey.withValues(alpha: 0.4), size: 18),
+        ),
+        const SizedBox(height: 6),
+        Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: active ? _brownDark : Colors.grey.withValues(alpha: 0.5), decoration: TextDecoration.none, height: 1.2)),
+      ]),
+    );
+  }
+
+  Widget _connector(bool active) {
+    return Expanded(child: Container(height: 2, margin: const EdgeInsets.only(bottom: 20), color: active ? _brown : Colors.grey.withValues(alpha: 0.2)));
   }
 }
