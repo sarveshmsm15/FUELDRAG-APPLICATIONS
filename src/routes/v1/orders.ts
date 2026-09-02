@@ -13,7 +13,7 @@ import { FuelType, OrderStatus } from "../../generated/prisma/client.js";
 const router = Router();
 
 const createOrderSchema = z.object({
-  addressId: z.string().uuid(),
+  addressId: z.string().optional(),
   vehicleId: z.string().uuid().optional(),
   fuelType: z.nativeEnum(FuelType),
   quantityLiters: z.number().min(1).max(100),

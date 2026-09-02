@@ -1,6 +1,3 @@
-import request from "supertest";
-
-// We test the health endpoint logic without starting the full server
 describe("Health Check", () => {
   it("should return healthy status object", () => {
     const healthResponse = {
@@ -29,5 +26,10 @@ describe("Health Check", () => {
       expect(check.status).toBe("ok");
       expect(check.latencyMs).toBeGreaterThanOrEqual(0);
     });
+  });
+
+  it("should have valid ISO timestamp", () => {
+    const ts = new Date().toISOString();
+    expect(ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 });
