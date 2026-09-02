@@ -104,6 +104,8 @@ model User {
   mfaSecret       String?   // TOTP secret (encrypted)
   pinHash         String?   // bcrypt hashed PIN
   biometricEnabled Boolean  @default(false)
+  securityQuestion   String?
+  securityAnswerHash String?
   deviceFingerprint String?
   lastLoginAt     DateTime?
   suspendedUntil  DateTime?
